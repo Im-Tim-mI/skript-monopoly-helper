@@ -1,0 +1,362 @@
+# ------------------------------------------------------------
+#  skript-monopoly-helper (English edition)
+#  https://github.com/Im-Tim-mI/skript-monopoly-helper
+#  Copyright (c) 2026 廷廷小教室、廷廷的家（Tim945）
+#  License: MIT + Commons Clause (see LICENSE)
+# ------------------------------------------------------------
+
+# ============================================================
+#  Monopoly Helper - English command edition (prefix monopoly_)
+#  ------------------------------------------------------------
+#  Use it with a Monopoly board to manage cash, dice, taxes and Chance / Fate cards.
+#  ★ All commands only work in the world  game_12  ★
+#
+#  Requirements: a server with the Skript plugin (2.7+ / MC 1.20+ recommended)
+#        Put it in plugins/Skript/scripts/ and run  /sk reload
+#
+#  ---------------- Commands ----------------
+#   Players:
+#     /monopoly_roll                  roll two dice           (aliases: /roll /dice)
+#     /monopoly_cash [player]         check cash              (aliases: /money /balance /cash)
+#     /monopoly_top                   cash ranking            (aliases: /moneytop /top)
+#     /monopoly_pay <player> <amount> pay another player      (alias: /pay)
+#     /monopoly_passgo                collect the GO salary   (alias: /passgo)
+#     /monopoly_tax income|luxury     pay a tax               (alias: /tax)
+#     /monopoly_chance                draw a Chance card      (alias: /chance)
+#     /monopoly_fate                  draw a Fate card        (aliases: /fate /destiny)
+#     /monopoly_help                  show help               (aliases: /dfwhelp /monopoly)
+#   Admins (OP):
+#     /monopoly_start [amount]                        give starting cash to everyone (alias: /dfwstart)
+#     /monopoly_bank give|take|set <player> <amount>  bank actions                   (alias: /bank)
+# ============================================================
+
+
+# ---------------- Settings & card contents (edit them here) ----------------
+on load:
+    set {dfw::config::world} to "game_12"      # world where the helper works
+    set {dfw::config::start} to 15000          # starting cash
+    set {dfw::config::passgo} to 2000          # salary for passing GO
+    set {dfw::config::tax-income} to 2000      # income tax
+    set {dfw::config::tax-luxury} to 1500      # luxury tax
+
+    # ----- Chance cards (positive = receive, negative = pay, 0 = message only) -----
+    delete {dfw::chance::*}
+    delete {dfw::chanceAmt::*}
+    set {dfw::chance::1} to "The bank pays you a dividend"
+    set {dfw::chanceAmt::1} to 1500
+    set {dfw::chance::2} to "Your receipt won the invoice lottery jackpot"
+    set {dfw::chanceAmt::2} to 5000
+    set {dfw::chance::3} to "You got a parking ticket"
+    set {dfw::chanceAmt::3} to -1000
+    set {dfw::chance::4} to "Your house needs repairs"
+    set {dfw::chanceAmt::4} to -800
+    set {dfw::chance::5} to "Advance to GO and collect your salary"
+    set {dfw::chanceAmt::5} to 2000
+    set {dfw::chance::6} to "Pay for a high-speed rail ticket"
+    set {dfw::chanceAmt::6} to -600
+    set {dfw::chance::7} to "You got a birthday red envelope"
+    set {dfw::chanceAmt::7} to 1000
+    set {dfw::chance::8} to "Your stock investment paid off big"
+    set {dfw::chanceAmt::8} to 3000
+    set {dfw::chance::9} to "Pay back income tax"
+    set {dfw::chanceAmt::9} to -2000
+    set {dfw::chance::10} to "You won the lottery"
+    set {dfw::chanceAmt::10} to 2500
+    set {dfw::chance::11} to "Pay medical expenses"
+    set {dfw::chanceAmt::11} to -1200
+    set {dfw::chance::12} to "Your government tax refund arrived"
+    set {dfw::chanceAmt::12} to 1000
+    set {dfw::chanceCount} to 12
+
+    # ----- Fate cards -----
+    delete {dfw::fate::*}
+    delete {dfw::fateAmt::*}
+    set {dfw::fate::1} to "Blessed by your ancestors - you receive an inheritance"
+    set {dfw::fateAmt::1} to 4000
+    set {dfw::fate::2} to "Car accident - pay the medical bills"
+    set {dfw::fateAmt::2} to -1500
+    set {dfw::fate::3} to "You found a wallet on the street"
+    set {dfw::fateAmt::3} to 700
+    set {dfw::fate::4} to "Your property tax is due"
+    set {dfw::fateAmt::4} to -1800
+    set {dfw::fate::5} to "Your work bonus arrived"
+    set {dfw::fateAmt::5} to 2000
+    set {dfw::fate::6} to "You lost your phone and bought a new one"
+    set {dfw::fateAmt::6} to -900
+    set {dfw::fate::7} to "Go directly to Jail! (move to the Jail tile yourself, no GO salary)"
+    set {dfw::fateAmt::7} to 0
+    set {dfw::fate::8} to "You won on a scratch card"
+    set {dfw::fateAmt::8} to 1500
+    set {dfw::fate::9} to "You treat your friends to dinner"
+    set {dfw::fateAmt::9} to -600
+    set {dfw::fate::10} to "Business at your street stall is booming"
+    set {dfw::fateAmt::10} to 1200
+    set {dfw::fate::11} to "Pay your water and electricity bills"
+    set {dfw::fateAmt::11} to -500
+    set {dfw::fate::12} to "You receive a government relief payment"
+    set {dfw::fateAmt::12} to 3000
+    set {dfw::fateCount} to 12
+
+
+# ---------------- Helper functions ----------------
+function inGame(p: player) :: boolean:
+    if "%world of {_p}%" is {dfw::config::world}:
+        return true
+    return false
+
+function bal(p: player) :: number:
+    return {dfw::money::%uuid of {_p}%} ? 0
+
+function addMoney(p: player, amt: number):
+    add {_amt} to {dfw::money::%uuid of {_p}%}
+
+function removeMoney(p: player, amt: number):
+    remove {_amt} from {dfw::money::%uuid of {_p}%}
+
+# Broadcast to every player in game_12
+function announce(msg: text):
+    loop all players:
+        if "%world of loop-player%" is {dfw::config::world}:
+            send {_msg} to loop-player
+
+
+# ---------------- Roll the dice ----------------
+command /monopoly_roll:
+    aliases: /roll, /dice
+    description: Roll two dice
+    trigger:
+        if inGame(player) is false:
+            send "&cThis command only works on the Monopoly map (game_12)!" to player
+            stop
+        set {_d1} to a random integer between 1 and 6
+        set {_d2} to a random integer between 1 and 6
+        set {_sum} to {_d1} + {_d2}
+        announce("&6&l🎲 %player% &erolled &b%{_d1}% &7+ &b%{_d2}% &7= &a&l%{_sum}%")
+        if {_d1} is {_d2}:
+            announce("&6✨ Doubles (%{_d1}%, %{_d2}%)! Roll again~")
+
+
+# ---------------- Check cash ----------------
+command /monopoly_cash [<player>]:
+    aliases: /money, /balance, /cash
+    description: Check cash
+    trigger:
+        if inGame(player) is false:
+            send "&cThis command only works on the Monopoly map (game_12)!" to player
+            stop
+        if argument 1 is set:
+            send "&e💰 %argument 1%'s cash: &a$%bal(argument 1)%" to player
+        else:
+            send "&e💰 Your cash: &a$%bal(player)%" to player
+
+
+# ---------------- Cash ranking (players on the map) ----------------
+command /monopoly_top:
+    aliases: /moneytop, /top
+    description: Cash ranking
+    trigger:
+        if inGame(player) is false:
+            send "&cThis command only works on the Monopoly map (game_12)!" to player
+            stop
+        send "&6&l===== Monopoly Cash Ranking =====" to player
+        delete {_names::*}
+        delete {_vals::*}
+        set {_c} to 0
+        loop all players:
+            if "%world of loop-player%" is {dfw::config::world}:
+                add 1 to {_c}
+                set {_names::%{_c}%} to loop-player
+                set {_vals::%{_c}%} to bal(loop-player)
+        # Sort from highest to lowest (selection sort)
+        set {_i} to 1
+        while {_i} < {_c}:
+            set {_j} to {_i} + 1
+            while {_j} <= {_c}:
+                if {_vals::%{_j}%} > {_vals::%{_i}%}:
+                    set {_tv} to {_vals::%{_i}%}
+                    set {_vals::%{_i}%} to {_vals::%{_j}%}
+                    set {_vals::%{_j}%} to {_tv}
+                    set {_tn} to {_names::%{_i}%}
+                    set {_names::%{_i}%} to {_names::%{_j}%}
+                    set {_names::%{_j}%} to {_tn}
+                add 1 to {_j}
+            add 1 to {_i}
+        set {_k} to 1
+        while {_k} <= {_c}:
+            send "&e#%{_k}% &f%{_names::%{_k}%}% &7- &a$%{_vals::%{_k}%}%" to player
+            add 1 to {_k}
+        if {_c} is 0:
+            send "&7No players are on the Monopoly map right now." to player
+
+
+# ---------------- Pay another player (rent / tolls) ----------------
+command /monopoly_pay <player> <integer>:
+    aliases: /pay
+    description: Pay another player
+    trigger:
+        if inGame(player) is false:
+            send "&cThis command only works on the Monopoly map (game_12)!" to player
+            stop
+        if argument 2 <= 0:
+            send "&cThe amount must be greater than 0!" to player
+            stop
+        if argument 1 is player:
+            send "&cYou can't pay yourself!" to player
+            stop
+        if bal(player) < argument 2:
+            send "&cNot enough cash! You only have $%bal(player)%." to player
+            stop
+        removeMoney(player, argument 2)
+        addMoney(argument 1, argument 2)
+        announce("&e💸 %player% &7paid &e%argument 1% &a$%argument 2%")
+        send "&7Your balance: &a$%bal(player)%" to player
+        send "&7Your balance: &a$%bal(argument 1)%" to argument 1
+
+
+# ---------------- Pass GO ----------------
+command /monopoly_passgo:
+    aliases: /passgo
+    description: Pass GO and collect your salary
+    trigger:
+        if inGame(player) is false:
+            send "&cThis command only works on the Monopoly map (game_12)!" to player
+            stop
+        addMoney(player, {dfw::config::passgo})
+        announce("&a🏁 %player% passed GO and collected &e$%{dfw::config::passgo}%")
+        send "&7Your balance: &a$%bal(player)%" to player
+
+
+# ---------------- Pay taxes ----------------
+command /monopoly_tax <text>:
+    aliases: /tax
+    description: Pay the income tax or the luxury tax
+    trigger:
+        if inGame(player) is false:
+            send "&cThis command only works on the Monopoly map (game_12)!" to player
+            stop
+        if argument 1 is "income":
+            set {_amt} to {dfw::config::tax-income}
+            set {_name} to "Income Tax"
+        else if argument 1 is "luxury":
+            set {_amt} to {dfw::config::tax-luxury}
+            set {_name} to "Luxury Tax"
+        else:
+            send "&cUsage: /monopoly_tax income  or  /monopoly_tax luxury" to player
+            stop
+        removeMoney(player, {_amt})
+        announce("&c🧾 %player% paid %{_name}% &e$%{_amt}%")
+        send "&7Your balance: &a$%bal(player)%" to player
+        if bal(player) < 0:
+            send "&4⚠ You are in debt: $%bal(player)%. You may have to sell assets or declare bankruptcy!" to player
+
+
+# ---------------- Draw Chance ----------------
+command /monopoly_chance:
+    aliases: /chance
+    description: Draw a Chance card
+    trigger:
+        if inGame(player) is false:
+            send "&cThis command only works on the Monopoly map (game_12)!" to player
+            stop
+        set {_n} to a random integer between 1 and {dfw::chanceCount}
+        set {_text} to {dfw::chance::%{_n}%}
+        set {_amt} to {dfw::chanceAmt::%{_n}%}
+        if {_amt} > 0:
+            addMoney(player, {_amt})
+            announce("&a&l[Chance] &e%player%: %{_text}% - receive &a$%{_amt}%")
+        else if {_amt} < 0:
+            addMoney(player, {_amt})
+            set {_pay} to {_amt} * -1
+            announce("&c&l[Chance] &e%player%: %{_text}% - pay &c$%{_pay}%")
+        else:
+            announce("&6&l[Chance] &e%player%: %{_text}%")
+        send "&7Your balance: &a$%bal(player)%" to player
+
+
+# ---------------- Draw Fate ----------------
+command /monopoly_fate:
+    aliases: /fate, /destiny
+    description: Draw a Fate card
+    trigger:
+        if inGame(player) is false:
+            send "&cThis command only works on the Monopoly map (game_12)!" to player
+            stop
+        set {_n} to a random integer between 1 and {dfw::fateCount}
+        set {_text} to {dfw::fate::%{_n}%}
+        set {_amt} to {dfw::fateAmt::%{_n}%}
+        if {_amt} > 0:
+            addMoney(player, {_amt})
+            announce("&b&l[Fate] &e%player%: %{_text}% - receive &a$%{_amt}%")
+        else if {_amt} < 0:
+            addMoney(player, {_amt})
+            set {_pay} to {_amt} * -1
+            announce("&5&l[Fate] &e%player%: %{_text}% - pay &c$%{_pay}%")
+        else:
+            announce("&d&l[Fate] &e%player%: %{_text}%")
+        send "&7Your balance: &a$%bal(player)%" to player
+
+
+# ---------------- Start the game / give starting cash (OP) ----------------
+command /monopoly_start [<integer>]:
+    aliases: /dfwstart
+    description: Give starting cash to everyone on the map
+    trigger:
+        if player is not op:
+            send "&cOnly admins (OP) can use this command!" to player
+            stop
+        if argument 1 is set:
+            set {_amt} to argument 1
+        else:
+            set {_amt} to {dfw::config::start}
+        set {_c} to 0
+        loop all players:
+            if "%world of loop-player%" is {dfw::config::world}:
+                set {dfw::money::%uuid of loop-player%} to {_amt}
+                add 1 to {_c}
+        announce("&6&l🎮 Monopoly begins! Every player gets starting cash of &a$%{_amt}%")
+        send "&aGave starting cash to %{_c}% players." to player
+
+
+# ---------------- Bank actions (OP) ----------------
+command /monopoly_bank <text> <player> <integer>:
+    aliases: /bank
+    description: The bank gives / takes / sets a player's cash
+    trigger:
+        if player is not op:
+            send "&cOnly admins (OP) can use this command!" to player
+            stop
+        if argument 3 < 0:
+            send "&cThe amount can't be negative!" to player
+            stop
+        if argument 1 is "give":
+            addMoney(argument 2, argument 3)
+            announce("&a🏦 The bank gave %argument 2% $%argument 3%")
+        else if argument 1 is "take":
+            removeMoney(argument 2, argument 3)
+            announce("&c🏦 The bank took $%argument 3% from %argument 2%")
+        else if argument 1 is "set":
+            set {dfw::money::%uuid of argument 2%} to argument 3
+            announce("&e🏦 The bank set %argument 2%'s cash to $%argument 3%")
+        else:
+            send "&cUsage: /monopoly_bank give|take|set <player> <amount>" to player
+            stop
+        send "&7%argument 2%'s balance: &a$%bal(argument 2)%" to player
+
+
+# ---------------- Help ----------------
+command /monopoly_help:
+    aliases: /dfwhelp, /monopoly
+    description: Monopoly Helper help
+    trigger:
+        send "&6&l===== Monopoly Helper (game_12) =====" to player
+        send "&e/monopoly_roll &7- roll two dice" to player
+        send "&e/monopoly_cash [player] &7- check cash" to player
+        send "&e/monopoly_top &7- cash ranking" to player
+        send "&e/monopoly_pay <player> <amount> &7- pay rent / tolls" to player
+        send "&e/monopoly_passgo &7- pass GO and collect your salary" to player
+        send "&e/monopoly_tax income|luxury &7- pay a tax" to player
+        send "&e/monopoly_chance &7- draw a Chance card" to player
+        send "&e/monopoly_fate &7- draw a Fate card" to player
+        if player is op:
+            send "&c[OP] /monopoly_start [amount] &7- give starting cash" to player
+            send "&c[OP] /monopoly_bank give|take|set <player> <amount>" to player
